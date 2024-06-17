@@ -65,6 +65,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.isVisible
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.lifecycleScope
+import arrow.core.raise.ensure
 import com.hippo.ehviewer.BuildConfig
 import com.hippo.ehviewer.R
 import com.hippo.ehviewer.Settings
@@ -172,14 +173,9 @@ class ReaderActivity : EhActivity() {
                             dialogState.awaitInputText(
                                 title = getString(R.string.archive_need_passwd),
                                 hint = getString(R.string.archive_passwd),
-                            ) {
-                                if (it.isBlank()) {
-                                    getString(R.string.passwd_cannot_be_empty)
-                                } else if (invalidator(it)) {
-                                    null
-                                } else {
-                                    getString(R.string.passwd_wrong)
-                                }
+                            ) { text ->
+                                ensure(text.isNotBlank()) { getString(R.string.passwd_cannot_be_empty) }
+                                ensure(invalidator(text)) { getString(R.string.passwd_wrong) }
                             }
                         }.onFailure {
                             finish()
@@ -380,15 +376,13 @@ class ReaderActivity : EhActivity() {
 
     private suspend fun makeToast(@StringRes resId: Int) = makeToast(getString(resId))
 
-    private fun provideImage(index: Int): Uri? {
-        return AppConfig.externalTempDir?.let { dir ->
-            mGalleryProvider?.saveToDir(index, dir.asUniFile())?.name?.let {
-                FileProvider.getUriForFile(
-                    this,
-                    BuildConfig.APPLICATION_ID + ".fileprovider",
-                    File(dir, it),
-                )
-            }
+    private fun provideImage(index: Int): Uri? = AppConfig.externalTempDir?.let { dir ->
+        mGalleryProvider?.saveToDir(index, dir.asUniFile())?.name?.let {
+            FileProvider.getUriForFile(
+                this,
+                BuildConfig.APPLICATION_ID + ".fileprovider",
+                File(dir, it),
+            )
         }
     }
 
@@ -676,28 +670,26 @@ class ReaderActivity : EhActivity() {
      */
     private inner class ReaderConfig {
 
-        private fun getCombinedPaint(grayscale: Boolean, invertedColors: Boolean): Paint {
-            return Paint().apply {
-                colorFilter = ColorMatrixColorFilter(
-                    ColorMatrix().apply {
-                        if (grayscale) {
-                            setSaturation(0f)
-                        }
-                        if (invertedColors) {
-                            postConcat(
-                                ColorMatrix(
-                                    floatArrayOf(
-                                        -1f, 0f, 0f, 0f, 255f,
-                                        0f, -1f, 0f, 0f, 255f,
-                                        0f, 0f, -1f, 0f, 255f,
-                                        0f, 0f, 0f, 1f, 0f,
-                                    ),
+        private fun getCombinedPaint(grayscale: Boolean, invertedColors: Boolean): Paint = Paint().apply {
+            colorFilter = ColorMatrixColorFilter(
+                ColorMatrix().apply {
+                    if (grayscale) {
+                        setSaturation(0f)
+                    }
+                    if (invertedColors) {
+                        postConcat(
+                            ColorMatrix(
+                                floatArrayOf(
+                                    -1f, 0f, 0f, 0f, 255f,
+                                    0f, -1f, 0f, 0f, 255f,
+                                    0f, 0f, -1f, 0f, 255f,
+                                    0f, 0f, 0f, 1f, 0f,
                                 ),
-                            )
-                        }
-                    },
-                )
-            }
+                            ),
+                        )
+                    }
+                },
+            )
         }
 
         /**
@@ -763,12 +755,10 @@ class ReaderActivity : EhActivity() {
         /**
          * Picks background color for [ReaderActivity] based on light/dark theme preference
          */
-        private fun automaticBackgroundColor(): Int {
-            return if (baseContext.isNightMode()) {
-                R.color.reader_background_dark
-            } else {
-                android.R.color.white
-            }
+        private fun automaticBackgroundColor(): Int = if (baseContext.isNightMode()) {
+            R.color.reader_background_dark
+        } else {
+            android.R.color.white
         }
 
         /**

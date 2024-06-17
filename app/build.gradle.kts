@@ -20,7 +20,7 @@ val supportedAbis = arrayOf("arm64-v8a", "x86_64", "armeabi-v7a")
 
 android {
     compileSdk = 34
-    ndkVersion = "27.0.11718014-beta1"
+    ndkVersion = "27.0.11902837-rc1"
     androidResources.generateLocaleConfig = true
 
     splits {
@@ -233,6 +233,7 @@ dependencies {
 
     implementation(platform(libs.arrow.stack))
     implementation(libs.arrow.fx.coroutines)
+    implementation(libs.arrow.resilience)
 
     // https://coil-kt.github.io/coil/changelog/
     implementation(platform(libs.coil.bom))
@@ -293,13 +294,15 @@ aboutLibraries {
     duplicationRule = GROUP
 }
 
+val ktlintVersion = libs.ktlint.get().version
+
 spotless {
     kotlin {
         // https://github.com/diffplug/spotless/issues/111
         target("src/**/*.kt")
-        ktlint()
+        ktlint(ktlintVersion)
     }
     kotlinGradle {
-        ktlint()
+        ktlint(ktlintVersion)
     }
 }

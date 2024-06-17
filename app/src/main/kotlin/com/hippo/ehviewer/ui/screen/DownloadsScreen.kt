@@ -76,7 +76,6 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.dimensionResource
-import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -96,8 +95,8 @@ import com.hippo.ehviewer.download.DownloadsFilterMode
 import com.hippo.ehviewer.download.SortMode
 import com.hippo.ehviewer.icons.EhIcons
 import com.hippo.ehviewer.icons.big.Download
+import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.LocalSideSheetState
-import com.hippo.ehviewer.ui.LockDrawer
 import com.hippo.ehviewer.ui.composing
 import com.hippo.ehviewer.ui.confirmRemoveDownloadRange
 import com.hippo.ehviewer.ui.main.DownloadCard
@@ -139,6 +138,7 @@ fun DownloadsScreen(navigator: DestinationsNavigator) = composing(navigator) {
     val filterMode by Settings.downloadFilterMode.collectAsState { DownloadsFilterMode.from(it) }
     var filterState by rememberSaveable { mutableStateOf(DownloadsFilterState(filterMode, Settings.recentDownloadLabel.value)) }
     var invalidateKey by rememberSaveable { mutableStateOf(false) }
+    var searchBarExpanded by rememberSaveable { mutableStateOf(false) }
     var searchBarOffsetY by remember { mutableIntStateOf(0) }
     val animateItems by Settings.animateItems.collectAsState()
 
@@ -146,7 +146,7 @@ fun DownloadsScreen(navigator: DestinationsNavigator) = composing(navigator) {
     var fabHidden by remember { mutableStateOf(false) }
     val checkedInfoMap = remember { mutableStateMapOf<Long, DownloadInfo>() }
     val selectMode by rememberUpdatedState(checkedInfoMap.isNotEmpty())
-    LockDrawer(selectMode)
+    DrawerHandle(!selectMode && !searchBarExpanded)
 
     val density = LocalDensity.current
     val canTranslate = Settings.showTagTranslations && EhTagDatabase.isTranslatable(implicit<Context>()) && EhTagDatabase.initialized
@@ -171,8 +171,6 @@ fun DownloadsScreen(navigator: DestinationsNavigator) = composing(navigator) {
         },
     )
     val hint = stringResource(R.string.search_bar_hint, title)
-    val sortModes = stringArrayResource(id = R.array.download_sort_modes)
-    val downloadStates = stringArrayResource(id = R.array.download_state)
     val list = remember(filterState, invalidateKey) {
         downloadInfoList.filterTo(mutableStateListOf()) { info ->
             filterState.take(info)
@@ -226,10 +224,9 @@ fun DownloadsScreen(navigator: DestinationsNavigator) = composing(navigator) {
                             launch {
                                 val text = awaitInputText(title = newLabel, hint = labelsStr) { text ->
                                     when {
-                                        text.isBlank() -> labelEmpty
-                                        text == defaultName -> defaultInvalid
-                                        DownloadManager.containLabel(text) -> labelExists
-                                        else -> null
+                                        text.isBlank() -> raise(labelEmpty)
+                                        text == defaultName -> raise(defaultInvalid)
+                                        DownloadManager.containLabel(text) -> raise(labelExists)
                                     }
                                 }
                                 DownloadManager.addLabel(text)
@@ -332,7 +329,8 @@ fun DownloadsScreen(navigator: DestinationsNavigator) = composing(navigator) {
                 )
             }
 
-            itemsIndexed(groupList, key = { _, (id) -> id }) { index, (id, label) ->
+            itemsIndexed(groupList, key = { _, (id) -> id }) { itemIndex, (id, label) ->
+                val index by rememberUpdatedState(itemIndex)
                 val item by rememberUpdatedState(label)
                 // Not using rememberSwipeToDismissBoxState to prevent LazyColumn from reusing it
                 val dismissState = remember { SwipeToDismissBoxState(SwipeToDismissBoxValue.Settled, density, positionalThreshold = positionalThreshold) }
@@ -388,10 +386,9 @@ fun DownloadsScreen(navigator: DestinationsNavigator) = composing(navigator) {
                                             launch {
                                                 val new = awaitInputText(initial = item, title = renameLabel, hint = labelsStr) { text ->
                                                     when {
-                                                        text.isBlank() -> labelEmpty
-                                                        text == defaultName -> defaultInvalid
-                                                        DownloadManager.containLabel(text) -> labelExists
-                                                        else -> null
+                                                        text.isBlank() -> raise(labelEmpty)
+                                                        text == defaultName -> raise(defaultInvalid)
+                                                        DownloadManager.containLabel(text) -> raise(labelExists)
                                                     }
                                                 }
                                                 DownloadManager.renameLabel(item, new)
@@ -436,14 +433,15 @@ fun DownloadsScreen(navigator: DestinationsNavigator) = composing(navigator) {
     }
 
     SearchBarScreen(
+        onApplySearch = { filterState = filterState.copy(keyword = it) },
+        expanded = searchBarExpanded,
+        onExpandedChange = {
+            searchBarExpanded = it
+            fabHidden = it
+            if (it) checkedInfoMap.clear()
+        },
         title = title,
         searchFieldHint = hint,
-        onApplySearch = { filterState = filterState.copy(keyword = it) },
-        onSearchExpanded = {
-            checkedInfoMap.clear()
-            fabHidden = true
-        },
-        onSearchHidden = { fabHidden = false },
         searchBarOffsetY = { searchBarOffsetY },
         trailingIcon = {
             var expanded by remember { mutableStateOf(false) }
@@ -650,8 +648,9 @@ fun DownloadsScreen(navigator: DestinationsNavigator) = composing(navigator) {
             }
             onClick(Icons.AutoMirrored.Default.Sort) {
                 val oldMode = SortMode.from(sortMode)
+                val sortModes = resources.getStringArray(R.array.download_sort_modes).toList()
                 val (selected, checked) = awaitSelectItemWithCheckBox(
-                    sortModes.toList(),
+                    sortModes,
                     R.string.sort_by,
                     R.string.group_by_download_label,
                     SortMode.All.indexOfFirst { it.field == oldMode.field && it.order == oldMode.order },
@@ -663,8 +662,9 @@ fun DownloadsScreen(navigator: DestinationsNavigator) = composing(navigator) {
                 invalidateKey = !invalidateKey
             }
             onClick(Icons.Default.FilterList) {
+                val downloadStates = resources.getStringArray(R.array.download_state).toList()
                 val state = awaitSingleChoice(
-                    downloadStates.toList(),
+                    downloadStates,
                     filterState.state + 1,
                     R.string.download_filter,
                 ) - 1

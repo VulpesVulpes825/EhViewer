@@ -77,7 +77,6 @@ import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.util.fastAny
 import androidx.compose.ui.util.fastForEach
 import androidx.compose.ui.util.lerp
 import androidx.lifecycle.viewModelScope
@@ -87,6 +86,8 @@ import androidx.paging.PagingSource
 import androidx.paging.PagingState
 import androidx.paging.cachedIn
 import androidx.paging.compose.collectAsLazyPagingItems
+import arrow.core.raise.ensure
+import arrow.core.raise.ensureNotNull
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.R
 import com.hippo.ehviewer.Settings
@@ -109,6 +110,7 @@ import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.dao.QuickSearch
 import com.hippo.ehviewer.icons.EhIcons
 import com.hippo.ehviewer.icons.filled.GoTo
+import com.hippo.ehviewer.ui.DrawerHandle
 import com.hippo.ehviewer.ui.LocalSideSheetState
 import com.hippo.ehviewer.ui.awaitSelectDate
 import com.hippo.ehviewer.ui.composing
@@ -172,12 +174,15 @@ fun ToplistScreen(navigator: DestinationsNavigator) = GalleryListScreen(ListUrlB
 fun GalleryListScreen(lub: ListUrlBuilder, navigator: DestinationsNavigator) = composing(navigator) {
     val searchFieldState = rememberTextFieldState()
     var urlBuilder by rememberSaveable(lub) { mutableStateOf(lub) }
+    var searchBarExpanded by rememberSaveable { mutableStateOf(false) }
     var searchBarOffsetY by remember { mutableIntStateOf(0) }
     var showSearchLayout by rememberSaveable { mutableStateOf(false) }
 
     var category by rememberMutableStateInDataStore("SearchCategory") { EhUtils.ALL_CATEGORY }
     var advancedSearchOption by rememberMutableStateInDataStore("AdvancedSearchOption") { AdvancedSearchOption() }
     var imageUri by rememberSaveable { mutableStateOf<Uri?>(null) }
+
+    DrawerHandle(!searchBarExpanded)
 
     LaunchedEffect(urlBuilder) {
         if (urlBuilder.category != EhUtils.NONE) category = urlBuilder.category
@@ -336,20 +341,15 @@ fun GalleryListScreen(lub: ListUrlBuilder, navigator: DestinationsNavigator) = c
                                     checkBoxText = R.string.save_progress,
                                 ) { input, checked ->
                                     var text = input.trim()
-                                    nameEmpty.takeIf {
-                                        text.isEmpty()
-                                    } ?: dupName.takeIf {
-                                        if (checked) text += "@$next"
-                                        quickSearchList.fastAny { it.name == text }
-                                    } ?: run {
-                                        val quickSearch = urlBuilder.toQuickSearch(text)
-                                        quickSearch.position = quickSearchList.size
-                                        // Insert to DB first to update the id
-                                        EhDB.insertQuickSearch(quickSearch)
-                                        quickSearchList.add(quickSearch)
-                                        saveProgress = checked
-                                        null
-                                    }
+                                    ensure(text.isNotBlank()) { nameEmpty }
+                                    if (checked) text += "@$next"
+                                    ensure(quickSearchList.none { it.name == text }) { dupName }
+                                    val quickSearch = urlBuilder.toQuickSearch(text)
+                                    quickSearch.position = quickSearchList.size
+                                    // Insert to DB first to update the id
+                                    EhDB.insertQuickSearch(quickSearch)
+                                    quickSearchList.add(quickSearch)
+                                    saveProgress = checked
                                 }
                             }
                         }
@@ -381,7 +381,8 @@ fun GalleryListScreen(lub: ListUrlBuilder, navigator: DestinationsNavigator) = c
                     stickyHeader {
                         HorizontalDivider()
                     }
-                    itemsIndexed(quickSearchList, key = { _, item -> item.id!! }) { index, item ->
+                    itemsIndexed(quickSearchList, key = { _, item -> item.id!! }) { itemIndex, item ->
+                        val index by rememberUpdatedState(itemIndex)
                         ReorderableItem(reorderableLazyListState, key = item.id!!) { isDragging ->
                             // Not using rememberSwipeToDismissBoxState to prevent LazyColumn from reusing it
                             val dismissState = remember { SwipeToDismissBoxState(SwipeToDismissBoxValue.Settled, density, positionalThreshold = positionalThreshold) }
@@ -395,11 +396,10 @@ fun GalleryListScreen(lub: ListUrlBuilder, navigator: DestinationsNavigator) = c
                                         }.onSuccess {
                                             EhDB.deleteQuickSearch(item)
                                             with(quickSearchList) {
-                                                val removeIndex = indexOf(item)
-                                                subList(removeIndex + 1, size).forEach {
+                                                subList(index + 1, size).forEach {
                                                     it.position--
                                                 }
-                                                removeAt(removeIndex)
+                                                removeAt(index)
                                             }
                                         }.onFailure {
                                             dismissState.reset()
@@ -538,12 +538,15 @@ fun GalleryListScreen(lub: ListUrlBuilder, navigator: DestinationsNavigator) = c
     }
 
     SearchBarScreen(
+        onApplySearch = ::onApplySearch,
+        expanded = searchBarExpanded,
+        onExpandedChange = {
+            searchBarExpanded = it
+            fabHidden = it
+        },
         title = suitableTitle,
         searchFieldState = searchFieldState,
         searchFieldHint = searchBarHint,
-        onApplySearch = ::onApplySearch,
-        onSearchExpanded = { fabHidden = true },
-        onSearchHidden = { fabHidden = false },
         suggestionProvider = {
             GalleryDetailUrlParser.parse(it, false)?.run {
                 GalleryDetailUrlSuggestion(gid, token)
@@ -728,11 +731,8 @@ fun GalleryListScreen(lub: ListUrlBuilder, navigator: DestinationsNavigator) = c
                     val page = urlBuilder.mJumpTo?.toIntOrNull() ?: 0
                     val hint = getString(R.string.go_to_hint, page + 1, TOPLIST_PAGES)
                     val text = awaitInputText(title = gotoTitle, hint = hint, isNumber = true) { oriText ->
-                        when (oriText.trim().toIntOrNull()?.let { it - 1 }) {
-                            null -> invalidNum
-                            !in 0..<TOPLIST_PAGES -> outOfRange
-                            else -> null
-                        }
+                        val goto = ensureNotNull(oriText.trim().toIntOrNull()) { invalidNum } - 1
+                        ensure(goto in 0..<TOPLIST_PAGES) { outOfRange }
                     }.trim().toInt() - 1
                     urlBuilder.setJumpTo(text)
                 } else {
